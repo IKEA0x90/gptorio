@@ -102,7 +102,6 @@ class Summary:
             self.picked = {}
             self.cancelled = {}
             self.marked = {}
-            self.marked = {}
             self.flushed = {}
             self.surface = []
             self.died = {}
