@@ -1,12 +1,15 @@
-import asyncio
 import json
 import sys
 import time
 import azure.cognitiveservices.speech as speechsdk
+import asyncio
 import os
 import openai
+import discord
 
 class Globals:
+    botKey = "DiscordBotKey"
+
     '''
     !!!
         If the scipt is telling you that the settings file was not found:
@@ -509,48 +512,87 @@ def clear_file(filename):
     except FileNotFoundError:
         print("Event file was not found. Make sure you already launched the save at least once. If that does not help, open the script with any text editor and read the text marked by exclamation marks (at the top).")
 
-async def main():
+client = discord.Client(intents=discord.Intents.all())
+
+@client.event
+async def on_message(message):
     try:
-        Globals.play = True
-        print("Execution has started.")
-        while Globals.play:
-            await play_audio()
-            await asyncio.sleep(Globals.interval)
+        if message.content == "!factorio":
+            Globals.play = True
+            await message.channel.send("Execution has started.")
+            print("Execution has started.")
+            while Globals.play:
+                await play_audio(message)
+                await asyncio.sleep(Globals.interval)
     except:
+        await message.channel.send("An error happened that the script was not able to handle. The script will continue to function, skipping this iteration.")
         print("An error happened that the script was not able to handle. The script will continue to function, skipping this iteration.")
 
+    if message.content == "!stop":
+        Globals.play = False
+        await message.channel.send("Execution has stopped.")
+        print("Execution has stopped.")
 
-async def play_audio():
+
+async def play_audio(message):
     canContinue = Globals.read_settings()
     events = read_file(Globals.filename)
 
     if canContinue and (events != False): 
+
+        voice_state = message.author.voice
+        if not voice_state:
+            await message.channel.send("Please join a voice channel.")
+            print("Please join a voice channel.")
+            return
+
+        voice_channel = voice_state.channel
+        voice_client = message.guild.voice_client
+        if voice_client and voice_client.channel != voice_channel:
+            await voice_client.move_to(voice_channel)
+        elif not voice_client:
+            voice_client = await voice_channel.connect()
+
+        if not voice_channel.members:
+            await voice_client.disconnect()
+            return
         
         summary = summarize_events(events)
 
         prompt = make_prompt(Globals.prompt, Globals.max_words, summary)
 
+
         try:
             response = await get_response(prompt)
         except openai.error.AuthenticationError:
+            await message.channel.send("OpenAI key you specified is incorrect.")
             print("OpenAI key you specified is incorrect.")
 
         try:
             response = response["choices"][0]["message"]["content"]
             response = json.loads(response)["response"]
-            print(response)
+            await message.channel.send(response)
             ssml = make_ssml(Globals.voice, Globals.mood, response)
         except Exception as e:
+            await message.channel.send(f"Something went wrong: {e}. Most probably, the response GPT provided was incorrectly formatted.")
             print(f"Something went wrong: {e}. Most probably, the response GPT provided was incorrectly formatted.")
 
         try:
             audio = await text_to_speech(ssml)
+            source = discord.FFmpegPCMAudio(executable=Globals.ffmpeg_path, source=audio)
+            voice_client.play(source)
             clear_file(Globals.filename)
         except Exception as e:
+            await message.channel.send(f"Azure key or region you specified is incorrect: {e}")
             print(f"Azure key or region you specified is incorrect: {e}")
+
+
+        while voice_client.is_playing():
+            await asyncio.sleep(1)
+
         
     else:
+        await message.channel.send("Settings or events file was not found. Make sure you already launched the save at least once. If that does not help, open the script with any text editor and read the text marked by exclamation marks (at the top).")
         print("Settings or events file was not found. Make sure you already launched the save at least once. If that does not help, open the script with any text editor and read the text marked by exclamation marks (at the top).")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+client.run(Globals.botKey)
